@@ -1,0 +1,7 @@
+{
+  "name": "that-place",
+  "version": "1.0.0",
+  "scripts": {
+    "deploy": "cp That-Place.html index.html && git add . && git commit -m 'update' && git push"
+  }
+}
