@@ -1155,6 +1155,38 @@
 </nav>
 
 <script>
+  // ── ImgDB: IndexedDB wrapper for photo blobs ──
+  const ImgDB = (() => {
+    const DB_NAME = 'thatplace_imgs', STORE = 'imgs', VERSION = 1;
+    function open() {
+      return new Promise((res, rej) => {
+        const req = indexedDB.open(DB_NAME, VERSION);
+        req.onupgradeneeded = e => e.target.result.createObjectStore(STORE);
+        req.onsuccess = e => res(e.target.result);
+        req.onerror = e => rej(e.target.error);
+      });
+    }
+    async function tx(mode, fn) {
+      const db = await open();
+      return new Promise((res, rej) => {
+        const t = db.transaction(STORE, mode);
+        const store = t.objectStore(STORE);
+        const req = fn(store);
+        req.onsuccess = e => res(e.target.result);
+        req.onerror = e => rej(e.target.error);
+      });
+    }
+    return {
+      put:   (id, b64) => tx('readwrite', s => s.put(b64, id)),
+      get:   (id)      => tx('readonly',  s => s.get(id)),
+      del:   (id)      => tx('readwrite', s => s.delete(id)),
+      clear: ()        => open().then(db => new Promise((res, rej) => {
+        const req = db.transaction(STORE, 'readwrite').objectStore(STORE).clear();
+        req.onsuccess = () => res(); req.onerror = e => rej(e.target.error);
+      })),
+    };
+  })();
+
   const CUISINES = [
     { name: 'Thai',          re: /\bthai\b|pad thai|pad see ew|tom kha|green curry/i },
     { name: 'Chinese',       re: /\bchinese\b|dim sum|dumpling|wonton|fried rice|hot pot/i },
@@ -2728,14 +2760,19 @@
   function photoCard(p, opts) {
     opts = opts || {};
     const card = document.createElement('div'); card.className = 'photo-card';
-    if (p.img) { const img = document.createElement('img'); img.src = p.img; img.alt = p.caption || 'food photo'; card.appendChild(img); }
+    if (p._imgId || p.img) {
+      const img = document.createElement('img'); img.alt = p.caption || 'food photo'; img.style.background = 'var(--surface-2)';
+      if (p.img) { img.src = p.img; }
+      else { ImgDB.get(p._imgId).then(src => { if (src) img.src = src; }); }
+      card.appendChild(img);
+    }
     const body = document.createElement('div'); body.className = 'photo-cap';
     if (p.caption) { const c = document.createElement('div'); c.textContent = p.caption; body.appendChild(c); }
     if (p.restaurant) { const t = document.createElement('div'); t.className = 'photo-tag'; t.textContent = '📍 ' + p.restaurant; body.appendChild(t); }
     if (opts.poster && p.posterName) { const pn = document.createElement('div'); pn.style.cssText = 'font-size:11px;color:var(--text-muted);margin-top:4px'; pn.textContent = 'from ' + p.posterName + ' · ' + fmtTime(p.time); body.appendChild(pn); }
     card.appendChild(body);
     if (opts.share) { const sb = document.createElement('button'); sb.className = 'mini-btn'; sb.style.cssText = 'margin:0 11px 11px'; sb.textContent = 'Share'; sb.onclick = () => sharePost(p, sb); card.appendChild(sb); }
-    if (opts.del) { const db = document.createElement('button'); db.className = 'mini-btn'; db.style.cssText = 'margin:0 11px 11px'; db.textContent = 'Delete'; db.onclick = () => { savePosts(loadPosts().filter(x => x.id !== p.id)); renderProfile(); }; card.appendChild(db); }
+    if (opts.del) { const db = document.createElement('button'); db.className = 'mini-btn'; db.style.cssText = 'margin:0 11px 11px'; db.textContent = 'Delete'; db.onclick = () => { if (p._imgId) ImgDB.del(p._imgId); savePosts(loadPosts().filter(x => x.id !== p.id)); renderProfile(); }; card.appendChild(db); }
     return card;
   }
   function renderProfilePhotos() {
@@ -2798,9 +2835,11 @@
     matches.forEach(n => { const d = document.createElement('div'); d.className = 'ac-item'; d.textContent = n; d.onclick = () => { inp.value = n; list.style.display = 'none'; }; list.appendChild(d); });
     list.style.display = '';
   }
-  function savePost() {
+  async function savePost() {
     if (!composerImg) { document.getElementById('composer-photo').style.borderColor = 'var(--accent-2)'; return; }
-    const post = { id: 'm' + Date.now(), img: composerImg, caption: document.getElementById('composer-caption').value.trim(), restaurant: document.getElementById('composer-restaurant').value.trim(), cuisine: document.getElementById('composer-cuisine').value.trim(), visibility: composerVis, kind: composerKind, time: Date.now() };
+    const id = 'm' + Date.now();
+    await ImgDB.put(id, composerImg);
+    const post = { id, _imgId: id, caption: document.getElementById('composer-caption').value.trim(), restaurant: document.getElementById('composer-restaurant').value.trim(), cuisine: document.getElementById('composer-cuisine').value.trim(), visibility: composerVis, kind: composerKind, time: Date.now() };
     const l = loadPosts(); l.unshift(post);
     if (!savePosts(l)) return;
     closeComposer();
@@ -3009,27 +3048,39 @@
   function fcDoneHtml(log){
     if (!log.tried) return `<div class="fc-done skipped"><div class="fc-done-title">Skipped today — there's always tomorrow.</div></div>`;
     const r = log.rating || 0;
-    return `<div class="fc-done">
+    const hasPhoto = log._photoId || log.photo;
+    const html = `<div class="fc-done">
       <div class="fc-done-title">✓ You tried it!</div>
       ${r ? `<div class="fc-done-stars">${'★'.repeat(r)}${'☆'.repeat(5 - r)}</div>` : ''}
       ${log.notes ? `<div class="fc-done-notes">"${fcEsc(log.notes)}"</div>` : ''}
-      ${log.photo ? `<img src="${log.photo}" alt="your photo" />` : ''}
+      ${hasPhoto ? `<img id="fc-done-photo" alt="your photo" style="background:var(--surface-2)" />` : ''}
     </div>
     <button class="add-photo-btn" style="margin-top:12px" onclick="fcPostMoment()">📸 Save &amp; post this to your profile</button>`;
+    if (hasPhoto) {
+      setTimeout(() => {
+        const el = document.getElementById('fc-done-photo'); if (!el) return;
+        if (log._photoId) ImgDB.get(log._photoId).then(src => { if (src) el.src = src; });
+        else el.src = log.photo;
+      }, 0);
+    }
+    return html;
   }
 
   // Post today's tried food as a Food Moment — reuses the same composer as
   // "found a restaurant", pre-filled with the food, your photo and rating.
-  function fcPostMoment(){
+  async function fcPostMoment(){
     const food = fcTodayFood(), log = fcTodayLog();
     openComposer(food.name, 'moment');
     document.getElementById('composer-cuisine').value = food.origin;
     const stars = log && log.rating ? ' ' + '★'.repeat(log.rating) : '';
     document.getElementById('composer-caption').value = `Daily challenge: tried ${food.name} ${food.emoji}${stars}`;
-    if (log && log.photo) {
-      composerImg = log.photo;
-      const ph = document.getElementById('composer-photo'); ph.innerHTML = '';
-      const img = document.createElement('img'); img.src = log.photo; ph.appendChild(img);
+    if (log) {
+      const photo = log.photo || (log._photoId ? await ImgDB.get(log._photoId) : null);
+      if (photo) {
+        composerImg = photo;
+        const ph = document.getElementById('composer-photo'); ph.innerHTML = '';
+        const img = document.createElement('img'); img.src = photo; ph.appendChild(img);
+      }
     }
   }
 
@@ -3157,10 +3208,12 @@
     });
     rd.readAsDataURL(f);
   }
-  function fcTried(){
+  async function fcTried(){
     if (!fcDraftPhoto) { const v = document.getElementById('fc-verify'); if (v) { v.className = 'fc-verify bad'; v.textContent = 'Add a photo of the dish first — it\'s required.'; } return; }
     const food = fcTodayFood();
-    fcUpsertLog({ date: fcDateStr(), foodName: food.name, emoji: food.emoji, tried: true, rating: fcDraftRating || null, notes: (document.getElementById('fc-notes')?.value || '').trim(), photo: fcDraftPhoto, time: Date.now() });
+    const photoId = 'fc_' + fcDateStr();
+    await ImgDB.put(photoId, fcDraftPhoto);
+    fcUpsertLog({ date: fcDateStr(), foodName: food.name, emoji: food.emoji, tried: true, rating: fcDraftRating || null, notes: (document.getElementById('fc-notes')?.value || '').trim(), _photoId: photoId, time: Date.now() });
     confetti();
     renderChallenge(); updateNavDots();
     maybeLinkUnsolved(food.name); // soft cross-link to That Place unsolved hunts
@@ -3415,10 +3468,11 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
   let resetArmed = false;
-  function resetAll() {
+  async function resetAll() {
     const btn = document.getElementById('reset-btn');
     if (!resetArmed) { resetArmed = true; btn.textContent = '⚠️ Tap again to erase everything'; setTimeout(() => { resetArmed = false; btn.textContent = 'Reset all data'; }, 4000); return; }
     try { ['rtp_v1','rtp_found_v1','rtp_places_v1','rtp_unsolved_v1','rtp_profile_v1','rtp_top10_v1','rtp_posts_v1','rtp_friends_v1','rtp_received_v1','fc_logs_v1',SETTINGS_KEY,SHIELD_KEY,THEME_KEY].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+    try { await ImgDB.clear(); } catch (e) {}
     location.reload();
   }
 
