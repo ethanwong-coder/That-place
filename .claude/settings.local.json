@@ -1,7 +1,21 @@
 {
   "permissions": {
     "allow": [
-      "Artifact"
+      "Artifact",
+      "Skill(artifact-design)",
+      "Bash(node -e ' *)",
+      "Bash(node --check /tmp/tp-check.js)",
+      "Bash(open *)",
+      "Bash(python3 -m http.server 8765)",
+      "Bash(echo \"server pid: $!\")",
+      "Bash(curl -s -o /dev/null -w \"localhost status: %{http_code}\\\\n\" \"http://localhost:8765/That-Place.html\")",
+      "Bash(cd *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8765/That-Place.html)",
+      "Bash(curl -s -o /dev/null -w \"localhost: %{http_code}\\\\n\" \"http://localhost:8765/That-Place.html\")",
+      "Bash(grep -n \"revealSavePlace\\(r.nameFragment\\\\|^</script>\\\\|renderPhase1\\(\\);$\" That-Place.html)",
+      "Bash(node --check /tmp/c.js)",
+      "Bash(npm -v)",
+      "Bash(psql --version)"
     ]
   }
 }
