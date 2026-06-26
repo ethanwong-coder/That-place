@@ -2252,20 +2252,28 @@
     }
   }
 
+  // Keep a dynamically-inserted question in sync with its condition: add it right
+  // after the current question when needed, or remove it (only while it's still
+  // ahead — never one already answered) when the condition no longer holds. This
+  // stops a stale landmark/radius question lingering after a Back-and-edit.
+  function syncInsertedQ(id, shouldShow, makeQ) {
+    const at = st.qs.findIndex(q => q.id === id);
+    if (shouldShow) { if (at === -1) st.qs.splice(st.idx + 1, 0, makeQ()); }
+    else if (at > st.idx) { st.qs.splice(at, 1); }
+  }
+
   // ── Search radius — asked only once we know a location or map area ──
   function maybeInsertRadius() {
     const hasLoc = (st.answers.loc && st.answers.loc.toLowerCase() !== 'near me') || st.answers.boundary;
-    if (hasLoc && !st.qs.some(q => q.id === 'radius')) {
-      st.qs.splice(st.idx + 1, 0, {
-        id: 'radius', type: 'choice', eyebrow: 'Search area',
-        text: 'How wide an area should we search?',
-        options: [
-          { label: 'Nearby — 5 mi', value: 8000 },
-          { label: 'Local area — 20 mi', value: 32000 },
-          { label: 'Wider search — 50 mi', value: 80000 },
-        ],
-      });
-    }
+    syncInsertedQ('radius', !!hasLoc, () => ({
+      id: 'radius', type: 'choice', eyebrow: 'Search area',
+      text: 'How wide an area should we search?',
+      options: [
+        { label: 'Nearby — 5 mi', value: 8000 },
+        { label: 'Local area — 20 mi', value: 32000 },
+        { label: 'Wider search — 50 mi', value: 80000 },
+      ],
+    }));
   }
 
   // ── "When" time slider ──
@@ -2295,16 +2303,13 @@
   function maybeInsertLandmark() {
     const locAns = (st.answers.loc || '').trim();
     const vague = locAns.split(/\s+/).filter(Boolean).length < 3;
-    const exists = st.qs.some(q => q.id === 'landmark');
     const knownLandmark = /\b(next to|across from|corner of|intersection|opposite|mall|plaza|station|park|stadium|airport)\b/i.test(st.desc + ' ' + locAns);
-    if (vague && !exists && !knownLandmark) {
-      st.qs.splice(st.idx + 1, 0, {
-        text: "What's the closest landmark you remember — a store, building, or intersection nearby?",
-        id: 'landmark', type: 'open',
-        eyebrow: 'One more on location',
-        hint: 'e.g. Across from the Target, near the train station, by the big church…'
-      });
-    }
+    syncInsertedQ('landmark', vague && !knownLandmark, () => ({
+      text: "What's the closest landmark you remember — a store, building, or intersection nearby?",
+      id: 'landmark', type: 'open',
+      eyebrow: 'One more on location',
+      hint: 'e.g. Across from the Target, near the train station, by the big church…'
+    }));
   }
 
   // ── Live search preview ──
@@ -2701,7 +2706,7 @@
   const RECEIVED_KEY = 'rtp_received_v1';
   const AVATARS = ['🍜','🍕','🍣','🌮','🍔','🥘','🍱','🫕','🍝','🥗'];
 
-  const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } };
+  const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { alert('Storage is full — try a smaller photo or remove old posts.'); return false; } };
 
   // base64 (URL-safe, unicode-safe)
@@ -3706,7 +3711,8 @@
       else if (name[0] === frag[0]) { score += 10; matched.name = true; }
     }
     // Explicit "starts with" letter/prefix — literal match on the first word.
-    if (nh.start) {
+    // Skip if the word fragment already matched, so one name clue isn't counted twice.
+    if (nh.start && !matched.name) {
       const firstWord = name.replace(/^(the|el|la|le)\s+/, '').trim();
       if (firstWord.startsWith(nh.start)) { score += nh.start.length > 1 ? 22 : 14; matched.name = true; }
     }
@@ -3742,23 +3748,26 @@
   // float matching restaurants to the top of the Google list — closest-first
   // within each group. Literal substring/prefix only; if they gave no name
   // signal, the list stays exactly as-is (closest-first). No overthinking.
-  function rkPrioritizeByName(list, a) {
+  function rkPrioritizeByName(list, a, r) {
     if (!list || !list.length) return list;
     const nh = (typeof nameHint === 'function') ? nameHint((a && a.name) || '') : { word: '', start: '' };
     const word = (nh.word || '').toLowerCase();
     const start = nh.start;
-    if ((!word || word.length < 2) && !start) return list;  // nothing to prioritize on
+    const cuisine = (((r && r.cuisine) || (detect((st.desc || '') + ' ' + ((a && a.vivid) || '')).cuisines[0]) || '')).toLowerCase();
+    if ((!word || word.length < 2) && !start && !cuisine) return list;  // nothing to prioritize on
     const firstWord = nm => (nm || '').toLowerCase().replace(/^(the|el|la|le)\s+/, '').trim();
-    const isMatch = p => {
+    const nameMatch = p => {
       const n = (p.name || '').toLowerCase();
       if (word && word.length > 1 && n.includes(word)) return true;
       if (start && firstWord(p.name).startsWith(start)) return true;
       return false;
     };
+    const cuisineMatch = p => !!cuisine && (((p.category || '').toLowerCase().includes(cuisine)) || ((p.name || '').toLowerCase().includes(cuisine)));
+    // Name is the strongest signal, cuisine secondary, distance breaks ties.
     // Stable sort: list is already closest-first, so preserving original index
-    // keeps distance order within the "matches" and "non-matches" groups.
-    return list.map((p, i) => ({ p, i, m: isMatch(p) ? 1 : 0 }))
-               .sort((x, y) => (y.m - x.m) || (x.i - y.i))
+    // keeps distance order within each priority group.
+    return list.map((p, i) => ({ p, i, s: (nameMatch(p) ? 2 : 0) + (cuisineMatch(p) ? 1 : 0) }))
+               .sort((x, y) => (y.s - x.s) || (x.i - y.i))
                .map(o => o.p);
   }
 
@@ -3845,7 +3854,7 @@
         const q = (r.query || '').replace(/\s*near me\s*/i, ' ').replace(/\s+/g, ' ').trim();
         const radius = (a.radius && [8000, 32000, 80000].includes(a.radius)) ? a.radius : 32000;
         const gp = await placesSearch(q, center, radius);
-        const ranked = rkPrioritizeByName(gp, a);
+        const ranked = rkPrioritizeByName(gp, a, r);
         if (ranked && ranked.length) { gmRenderPlaces(ranked, center); return; }
       } catch (e) { console.warn('Places failed, falling back to OSM:', e); }
     }
