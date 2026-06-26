@@ -1,0 +1,15 @@
+{
+  "name": "That Place",
+  "short_name": "That Place",
+  "description": "Find that restaurant you can't stop thinking about — plus a daily food challenge.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FBF3E2",
+  "theme_color": "#FBF3E2",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
