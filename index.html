@@ -224,6 +224,8 @@
     .binary-opt:hover { border-color: var(--accent); background: rgba(232,168,56,0.06); }
     .binary-opt.selected { border-color: var(--accent); background: rgba(232,168,56,0.12); color: var(--accent); }
 
+    .back-btn { background: none; border: none; color: var(--text-muted); font-size: 13px; font-family: inherit; cursor: pointer; padding: 2px 0; margin-bottom: 10px; transition: color 0.2s; }
+    .back-btn:hover { color: var(--text); }
     .skip-btn { background: none; border: none; color: var(--text-muted); font-size: 13px; font-family: inherit; cursor: pointer; padding: 6px 0; display: block; width: 100%; text-align: center; transition: color 0.2s; margin-top: 6px; }
     .skip-btn:hover { color: var(--text); }
 
@@ -662,6 +664,22 @@
     .manual-divider { display:flex; align-items:center; gap:12px; margin:20px 0; color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.12em; }
     .manual-divider::before, .manual-divider::after { content:''; flex:1; height:1px; background:var(--border); }
 
+    /* ── Google Places cards (rich results) ── */
+    .gm-card { display:flex; gap:12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:14px; margin-bottom:12px; }
+    .gm-body { flex:1; min-width:0; }
+    .gm-photo { width:84px; height:84px; border-radius:10px; object-fit:cover; flex-shrink:0; }
+    .gm-name { font-family:Georgia, serif; font-size:17px; color:var(--text); margin-bottom:4px; line-height:1.3; }
+    .gm-rating { font-size:13px; color:var(--text); margin-bottom:3px; }
+    .gm-stars { color:var(--accent); letter-spacing:1px; }
+    .gm-muted { color:var(--text-muted); }
+    .gm-meta { font-size:12px; color:var(--text-muted); line-height:1.5; word-break:break-word; }
+    .gm-open { font-size:12px; margin-top:3px; }
+    .gm-open.yes { color:#6BCB77; }
+    .gm-open.no { color:var(--accent-2); }
+    .gm-snippet { font-size:12px; color:var(--text); font-style:italic; line-height:1.5; margin-top:6px; }
+    .gm-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    .gm-attr { font-size:11px; color:var(--text-muted); opacity:0.7; margin:2px 0 4px; }
+
     /* ── "When" time slider ── */
     .when-value { font-family: Georgia, serif; font-size: 22px; color: var(--accent); text-align: center; margin-bottom: 16px; }
     .when-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 100px; background: var(--surface-2); outline: none; margin: 6px 0; }
@@ -774,6 +792,7 @@
       <span class="qp-text" id="qp-text"></span>
     </div>
     <div class="q-section" id="q-section">
+      <button class="back-btn" id="back-btn" onclick="prevQ()" style="display:none">← Back</button>
       <div class="q-eyebrow" id="q-eyebrow"></div>
       <div class="q-text" id="q-text"></div>
       <!-- Open text input -->
@@ -1039,6 +1058,11 @@
       <div class="ios-row"><div class="ios-row-label">Vegan</div><button class="ios-switch" id="sw-vegan" onclick="toggleDiet('vegan')"><span class="knob"></span></button></div>
       <div class="ios-row"><div class="ios-row-label">Halal</div><button class="ios-switch" id="sw-halal" onclick="toggleDiet('halal')"><span class="knob"></span></button></div>
       <div class="ios-row"><div class="ios-row-label">Kosher</div><button class="ios-switch" id="sw-kosher" onclick="toggleDiet('kosher')"><span class="knob"></span></button></div>
+      <div class="ios-row"><div class="ios-row-label">Other</div><button class="ios-switch" id="sw-other" onclick="toggleDiet('other')"><span class="knob"></span></button></div>
+      <div class="settings-block" id="diet-other-row" style="display:none">
+        <input type="text" class="time-input" id="diet-other-input" placeholder="e.g. no nuts, gluten-free, no shellfish…" autocomplete="off" oninput="setDietOther(this.value)" style="width:100%" />
+        <div class="ios-row-sub" style="margin-top:6px">We'll flag each day's food with a reminder to check it fits this.</div>
+      </div>
       <div class="settings-block">
         <div class="settings-block-label">Challenge difficulty</div>
         <div class="segmented" id="diff-seg">
@@ -1680,10 +1704,15 @@
       if (vividSpecific && loc) altUrls.push({label:`"${vivid}" in ${loc}`, url:`https://www.google.com/maps/search/${encodeURIComponent(vivid+' '+loc)}`});
       altUrls.push({label:'Search with no location filter', url:`https://www.google.com/maps/search/${baseEnc}`});
     } else if (hasStatedLoc) {
-      // User named a place — keep alternatives anchored to that place.
-      if (d.cuisines.length) altUrls.push({label:`${d.cuisines[0]} restaurant in ${loc}`, url:`https://www.google.com/maps/search/${encodeURIComponent(d.cuisines[0]+' restaurant '+loc)}`});
-      if (nm) altUrls.push({label:`"${nm}" in ${loc}`, url:`https://www.google.com/maps/search/${encodeURIComponent(nm+' '+loc)}`});
-      altUrls.push({label:`Just restaurants in ${loc}`, url:`https://www.google.com/maps/search/${encodeURIComponent('restaurants '+loc)}`});
+      // Named a place — offer varied ANGLES anchored to it, not a generic "restaurants in <city>".
+      const cz = d.cuisines[0] || '';
+      const gm = (q) => `https://www.google.com/maps/search/${encodeURIComponent(q.replace(/\s+/g, ' ').trim())}`;
+      if (nm) altUrls.push({ label: `The name — “${nm}” in ${loc}`, url: gm(`"${nm}" ${cz} ${loc}`) });
+      if (cz) altUrls.push({ label: `Best ${cz} spots in ${loc}`, url: gm(`best ${cz} restaurants ${loc}`) });
+      if (vividSpecific) { const vk = distill(vivid, 4); if (vk) altUrls.push({ label: `What you remember: “${vivid.slice(0, 28)}”`, url: gm(`${cz} ${vk} ${loc}`) }); }
+      if (visual) { const vw = distill(visual, 3); if (vw) altUrls.push({ label: `The look: ${vw}`, url: gm(`${cz} ${vw} ${loc}`) }); }
+      if (landmark) altUrls.push({ label: `Right by ${landmark}`, url: gm(`${cz || 'restaurants'} near ${landmark} ${loc}`) });
+      altUrls.push({ label: `Widen beyond ${loc}`, url: `https://www.google.com/maps/search/${baseEnc}` });
     } else if (userCoords) {
       const base=`https://www.google.com/maps/search/${baseEnc}`, c=userCoords;
       altUrls.push({label:`Can't find it? Widen to city level`, url:`${base}/@${c.lat},${c.lon},12z`});
@@ -2067,6 +2096,7 @@
       if (i===idx) dot.classList.add('active');
     });
     document.getElementById('progress-label').textContent = `${idx+1} of ${st.qs.length}`;
+    document.getElementById('back-btn').style.display = idx > 0 ? '' : 'none';
 
     const sec = document.getElementById('q-section');
     sec.style.display=''; sec.classList.remove('visible');
@@ -2157,6 +2187,10 @@
     showPhase(2); showQ(0);
   }
 
+  function prevQ() {
+    stopListening(); stopSpeaking(); clearVS();
+    if (st.idx > 0) { st.idx--; showQ(st.idx); }
+  }
   function nextQ() { st.answers[st.qs[st.idx].id]=document.getElementById('ans-input').value.trim(); advance(); }
   function skipQ() { st.answers[st.qs[st.idx].id]=''; advance(); }
 
@@ -3033,6 +3067,8 @@
     const compat = FC_DIET[food.name] || [1,1,1,1];
     const chips = [];
     Object.keys(DIET_IDX).forEach(k => { if (s.diet[k] && !compat[DIET_IDX[k]]) chips.push('⚠️ may not be ' + k); });
+    // "Other" is a custom restriction we can't verify per dish — show a reminder to check.
+    if (s.diet.other && (s.dietOther || '').trim()) chips.push('⚠️ check it fits: ' + s.dietOther.trim());
     const allow = { all:['easy','medium','hard'], easy:['easy'], em:['easy','medium'], hard:['hard'] }[s.difficulty] || ['easy','medium','hard'];
     if (!allow.includes(food.difficulty)) chips.push('⚠️ outside your difficulty filter');
     return chips.map(c => `<span class="diet-chip">${fcEsc(c)}</span>`).join('');
@@ -3391,7 +3427,7 @@
   function setTheme(t) { try { localStorage.setItem(THEME_KEY, t); } catch (e) {} applyTheme(t); }
   function toggleDark() { const next = loadThemePref() === 'dark' ? 'light' : 'dark'; setTheme(next); renderSettings(); }
 
-  const DEFAULT_SETTINGS = { fontSize: 'md', reminder: false, reminderTime: '12:00', diet: { vegetarian: false, vegan: false, halal: false, kosher: false }, difficulty: 'all' };
+  const DEFAULT_SETTINGS = { fontSize: 'md', reminder: false, reminderTime: '12:00', diet: { vegetarian: false, vegan: false, halal: false, kosher: false, other: false }, dietOther: '', difficulty: 'all' };
   function loadSettings() { const s = lsGet(SETTINGS_KEY, {}); return Object.assign({}, DEFAULT_SETTINGS, s, { diet: Object.assign({}, DEFAULT_SETTINGS.diet, s.diet || {}) }); }
   function saveSettings(s) { lsSet(SETTINGS_KEY, s); }
   function loadShield() { return lsGet(SHIELD_KEY, { enabled: false, lastUsedMonth: null }); }
@@ -3403,6 +3439,7 @@
   function setFontSize(v) { const s = loadSettings(); s.fontSize = v; saveSettings(s); applyFontSize(v); renderSettings(); }
   function setDifficulty(v) { const s = loadSettings(); s.difficulty = v; saveSettings(s); renderSettings(); if (activeTab === 'challenge') renderChallenge(); }
   function toggleDiet(key) { const s = loadSettings(); s.diet[key] = !s.diet[key]; saveSettings(s); renderSettings(); if (activeTab === 'challenge') renderChallenge(); }
+  function setDietOther(v) { const s = loadSettings(); s.dietOther = v; saveSettings(s); if (activeTab === 'challenge') renderChallenge(); }
   function toggleShield() { const sh = loadShield(); sh.enabled = !sh.enabled; saveShield(sh); renderSettings(); }
   function setReminderTime(v) { const s = loadSettings(); s.reminderTime = v; saveSettings(s); scheduleReminder(); }
   function toggleReminder() {
@@ -3437,6 +3474,9 @@
     document.getElementById('sw-vegan').classList.toggle('on', s.diet.vegan);
     document.getElementById('sw-halal').classList.toggle('on', s.diet.halal);
     document.getElementById('sw-kosher').classList.toggle('on', s.diet.kosher);
+    document.getElementById('sw-other').classList.toggle('on', s.diet.other);
+    document.getElementById('diet-other-row').style.display = s.diet.other ? '' : 'none';
+    document.getElementById('diet-other-input').value = s.dietOther || '';
     const sh = loadShield();
     document.getElementById('sw-shield').classList.toggle('on', sh.enabled);
     const ss = document.getElementById('shield-status');
@@ -3593,6 +3633,66 @@
     return { score: Math.min(100, Math.round(score)), matched };
   }
 
+  // ── Google Places (rich cards via the cloud proxy) ──
+  async function placesSearch(query, center, radius) {
+    if (!FC_PROXY_URL) throw new Error('no proxy');
+    const res = await fetch(FC_PROXY_URL.replace(/\/$/, '') + '/places', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, lat: center.lat, lon: center.lon, radius }),
+    });
+    if (!res.ok) throw new Error('places ' + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return (data.places || []).map(p => Object.assign(p, {
+      dist: (typeof p.lat === 'number' && typeof p.lon === 'number') ? fcHaversine(center.lat, center.lon, p.lat, p.lon) : Infinity,
+    })).sort((x, y) => x.dist - y.dist);
+  }
+  function gmRenderPlaces(list, center) {
+    const sec = document.getElementById('ranked-section');
+    sec.innerHTML = '';
+    const head = document.createElement('div'); head.className = 'ranked-head';
+    head.textContent = `${list.length} place${list.length > 1 ? 's' : ''} — closest first, from Google.`;
+    sec.appendChild(head);
+    list.forEach(p => sec.appendChild(gmCard(p)));
+    const attr = document.createElement('div'); attr.className = 'gm-attr'; attr.textContent = 'Results from Google';
+    sec.appendChild(attr);
+    const div = document.createElement('div'); div.className = 'manual-divider'; div.textContent = 'Or search manually →';
+    sec.appendChild(div);
+  }
+  function gmCard(p) {
+    const card = document.createElement('div'); card.className = 'gm-card';
+    const body = document.createElement('div'); body.className = 'gm-body';
+    const nm = document.createElement('div'); nm.className = 'gm-name'; nm.textContent = p.name; body.appendChild(nm);
+    if (p.rating) {
+      const rr = document.createElement('div'); rr.className = 'gm-rating';
+      const rounded = Math.round(p.rating);
+      rr.innerHTML = `<span class="gm-stars">${'★'.repeat(rounded)}${'☆'.repeat(5 - rounded)}</span> ${p.rating} <span class="gm-muted">(${(p.reviews || 0).toLocaleString()})</span>${p.price ? ' · ' + p.price : ''}`;
+      body.appendChild(rr);
+    }
+    const bits = [];
+    if (p.category) bits.push(p.category);
+    if (typeof p.dist === 'number' && isFinite(p.dist)) bits.push((p.dist / 1000).toFixed(1) + ' km');
+    if (p.address) bits.push(p.address);
+    const meta = document.createElement('div'); meta.className = 'gm-meta'; meta.textContent = bits.join(' · '); body.appendChild(meta);
+    if (p.openNow != null) { const o = document.createElement('div'); o.className = 'gm-open ' + (p.openNow ? 'yes' : 'no'); o.textContent = p.openNow ? 'Open now' : 'Closed'; body.appendChild(o); }
+    if (p.snippet) { const s = document.createElement('div'); s.className = 'gm-snippet'; s.textContent = '“' + p.snippet.slice(0, 110) + (p.snippet.length > 110 ? '…' : '') + '”'; body.appendChild(s); }
+    const acts = document.createElement('div'); acts.className = 'gm-actions';
+    const open = document.createElement('a'); open.className = 'rk-btn primary'; open.target = '_blank'; open.rel = 'noopener noreferrer';
+    open.href = p.mapsUri || `https://www.google.com/maps/search/${encodeURIComponent(p.name + ' ' + (p.address || ''))}`;
+    open.textContent = 'Open in Google Maps →';
+    const found = document.createElement('button'); found.className = 'rk-btn found'; found.textContent = 'Found it! →';
+    found.onclick = () => rkFound({ name: p.name, lat: p.lat, lon: p.lon, address: p.address });
+    acts.appendChild(open); acts.appendChild(found); body.appendChild(acts);
+    card.appendChild(body);
+    if (p.photo) {
+      const img = document.createElement('img'); img.className = 'gm-photo'; img.loading = 'lazy'; img.alt = p.name;
+      img.src = FC_PROXY_URL.replace(/\/$/, '') + '/photo?w=200&name=' + encodeURIComponent(p.photo);
+      img.onerror = () => img.remove();
+      card.appendChild(img);
+    }
+    return card;
+  }
+
   async function runRankedSearch(r) {
     const sec = document.getElementById('ranked-section');
     if (!sec) return;
@@ -3610,6 +3710,16 @@
     if (!center && typeof userCoords !== 'undefined' && userCoords) center = { lat: +userCoords.lat, lon: +userCoords.lon };
     if (!center) { sec.innerHTML = '<div class="ranked-note">Add a location and we can rank real nearby matches here.</div><div class="manual-divider">Or search manually →</div>'; return; }
 
+    // Prefer Google Places (rich cards: rating, photo, hours) when the proxy is configured.
+    if (FC_PROXY_URL) {
+      try {
+        const q = (r.query || '').replace(/\s*near me\s*/i, ' ').replace(/\s+/g, ' ').trim();
+        const radius = (a.radius && [1000, 5000, 10000].includes(a.radius)) ? a.radius : 8000;
+        const gp = await placesSearch(q, center, radius);
+        if (gp && gp.length) { gmRenderPlaces(gp, center); return; }
+      } catch (e) { console.warn('Places failed, falling back to OSM:', e); }
+    }
+
     let raw = [];
     // Use the radius the user picked in the questions (default 5km); widen once if too sparse.
     const chosen = (a.radius && [1000, 5000, 10000].includes(a.radius)) ? a.radius : 5000;
@@ -3625,9 +3735,9 @@
     // "sit-down" or "outdoor" match half of all restaurants, so they don't
     // qualify a result on their own (they still boost ranking). This stops the
     // list from padding itself with random nearby spots that fit nothing.
-    const scored = raw.map(c => Object.assign(c, rkScore(c, a, r)))
+    const scored = raw.map(c => Object.assign(c, rkScore(c, a, r), { dist: fcHaversine(center.lat, center.lon, c.lat, c.lon) }))
       .filter(c => c.matched && (c.matched.cuisine || c.matched.name || c.matched.vivid))
-      .sort((x, y) => y.score - x.score)
+      .sort((x, y) => x.dist - y.dist)   // ranked from closest
       .slice(0, 10);
     if (!scored.length) {
       sec.innerHTML = "<div class=\"ranked-note\">We searched real places nearby but couldn't confidently match one to what you remember. Try adding the cuisine or a piece of the name — or use the search links below to look wider.</div><div class=\"manual-divider\">Or search manually →</div>";
@@ -3643,7 +3753,7 @@
 
     const head = document.createElement('div');
     head.className = 'ranked-head';
-    head.textContent = `We found ${scored.length} possible match${scored.length > 1 ? 'es' : ''} — ranked by how closely they fit what you described.`;
+    head.textContent = `We found ${scored.length} possible match${scored.length > 1 ? 'es' : ''} — closest first, with how well each fits what you described.`;
     sec.appendChild(head);
 
     const chips = document.createElement('div'); chips.className = 'ranked-chips';
@@ -3688,7 +3798,8 @@
         `<div class="rk-scorebar-wrap"><div class="rk-scorebar"><i style="width:${pct}%;background:${color}"></i></div><span class="rk-score-num" style="color:${color}">${pct}%</span></div>` +
         `<div class="rk-name"></div><div class="rk-addr"></div></div>`;
     card.querySelector('.rk-name').textContent = c.name || 'Unnamed spot';
-    card.querySelector('.rk-addr').textContent = c.address || 'Address not listed in OpenStreetMap';
+    const distStr = (typeof c.dist === 'number') ? `${(c.dist / 1000).toFixed(1)} km · ` : '';
+    card.querySelector('.rk-addr').textContent = distStr + (c.address || 'Address not listed in OpenStreetMap');
     const body = card.querySelector('.rk-body');
     if (c.tags && c.tags.cuisine) { const ct = document.createElement('span'); ct.className = 'rk-cuisine'; ct.textContent = c.tags.cuisine.replace(/[_;]/g, ' '); body.appendChild(ct); }
 

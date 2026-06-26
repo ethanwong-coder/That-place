@@ -9,11 +9,20 @@ export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin') || '';
     const allow = corsOrigin(origin, env);
+    const path = new URL(request.url).pathname;
 
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors(allow) });
+    // Origin allowlist — deters other sites' JS from abusing your key. Only enforced when an
+    // Origin header is present (cross-site fetch); <img> photo loads send none and must pass.
+    if (origin && env.ALLOWED_ORIGIN && allow === 'null') return json({ error: 'forbidden origin' }, 403, allow);
+
+    // ── Google Places (New): restaurant search ──
+    if (path === '/places') return placesSearch(request, env, allow);
+    // ── Google Places photo proxy (keeps MAPS_KEY out of <img> URLs) ──
+    if (path === '/photo') return placePhoto(request, env, allow);
+
+    // ── Gemini vision verify (default / "/") ──
     if (request.method !== 'POST') return json({ error: 'POST only' }, 405, allow);
-    // Origin allowlist — deters other sites from abusing your key (not airtight: Origin can be spoofed by non-browsers).
-    if (env.ALLOWED_ORIGIN && allow === 'null') return json({ error: 'forbidden origin' }, 403, allow);
     if (!env.GEMINI_KEY) return json({ error: 'server not configured' }, 500, allow);
 
     let body;
@@ -42,6 +51,75 @@ export default {
     return json(verdict, 200, allow);
   },
 };
+
+// ── Places API (New) Text Search → compact restaurant cards ──────────────
+async function placesSearch(request, env, allow) {
+  if (request.method !== 'POST') return json({ error: 'POST only' }, 405, allow);
+  if (!env.MAPS_KEY) return json({ error: 'maps not configured' }, 500, allow);
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ error: 'bad json' }, 400, allow); }
+  const { query, lat, lon, radius } = body || {};
+  if (!query) return json({ error: 'missing query' }, 400, allow);
+
+  const reqBody = { textQuery: String(query).slice(0, 256), maxResultCount: 12, rankPreference: 'DISTANCE' };
+  if (typeof lat === 'number' && typeof lon === 'number') {
+    reqBody.locationBias = { circle: { center: { latitude: lat, longitude: lon }, radius: Math.min(Math.max(radius || 8000, 1), 50000) } };
+  }
+  const fieldMask = [
+    'places.displayName', 'places.formattedAddress', 'places.rating', 'places.userRatingCount',
+    'places.priceLevel', 'places.currentOpeningHours.openNow', 'places.googleMapsUri',
+    'places.photos', 'places.reviews', 'places.location', 'places.primaryTypeDisplayName',
+  ].join(',');
+
+  let res;
+  try {
+    res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': env.MAPS_KEY, 'X-Goog-FieldMask': fieldMask },
+      body: JSON.stringify(reqBody),
+    });
+  } catch (e) { return json({ error: 'places unreachable' }, 502, allow); }
+  if (!res.ok) return json({ error: 'places ' + res.status, detail: (await res.text()).slice(0, 300) }, 502, allow);
+
+  const data = await res.json();
+  const places = (data.places || []).map(p => ({
+    name: (p.displayName && p.displayName.text) || 'Unnamed',
+    address: p.formattedAddress || '',
+    rating: p.rating || null,
+    reviews: p.userRatingCount || 0,
+    price: priceToSymbol(p.priceLevel),
+    openNow: p.currentOpeningHours ? p.currentOpeningHours.openNow : null,
+    mapsUri: p.googleMapsUri || '',
+    category: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || '',
+    photo: (p.photos && p.photos[0] && p.photos[0].name) || '',
+    snippet: (p.reviews && p.reviews[0] && p.reviews[0].text && p.reviews[0].text.text) || '',
+    lat: p.location ? p.location.latitude : null,
+    lon: p.location ? p.location.longitude : null,
+  }));
+  return json({ places }, 200, allow);
+}
+
+function priceToSymbol(level) {
+  const map = { PRICE_LEVEL_INEXPENSIVE: '$', PRICE_LEVEL_MODERATE: '$$', PRICE_LEVEL_EXPENSIVE: '$$$', PRICE_LEVEL_VERY_EXPENSIVE: '$$$$' };
+  return map[level] || '';
+}
+
+// ── Place photo proxy: streams the image so MAPS_KEY never appears client-side ──
+async function placePhoto(request, env, allow) {
+  if (!env.MAPS_KEY) return json({ error: 'maps not configured' }, 500, allow);
+  const u = new URL(request.url);
+  const name = u.searchParams.get('name') || '';
+  const w = Math.min(parseInt(u.searchParams.get('w') || '200', 10) || 200, 800);
+  if (!/^places\/[^/]+\/photos\/[^/]+$/.test(name)) return json({ error: 'bad photo name' }, 400, allow);
+  let res;
+  try {
+    res = await fetch(`https://places.googleapis.com/v1/${name}/media?maxWidthPx=${w}&key=${env.MAPS_KEY}`, { redirect: 'follow' });
+  } catch (e) { return json({ error: 'photo unreachable' }, 502, allow); }
+  if (!res.ok) return json({ error: 'photo ' + res.status }, 502, allow);
+  const headers = { 'Content-Type': res.headers.get('Content-Type') || 'image/jpeg', 'Cache-Control': 'public, max-age=86400' };
+  if (allow && allow !== 'null') headers['Access-Control-Allow-Origin'] = allow;
+  return new Response(res.body, { status: 200, headers });
+}
 
 function corsOrigin(origin, env) {
   if (!env.ALLOWED_ORIGIN) return '*';

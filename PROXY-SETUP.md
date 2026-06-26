@@ -12,11 +12,13 @@ wrangler deploy                # deploys worker.js using wrangler.toml
 ```
 This prints a URL like `https://thatplace-vision.<you>.workers.dev`.
 
-## 2. Add your Gemini key as a secret (never in the app)
+## 2. Add your API keys as secrets (never in the app)
 ```bash
-wrangler secret put GEMINI_KEY
-# paste your AIza… key when prompted
+wrangler secret put GEMINI_KEY   # paste your Gemini (AI Studio) AIza… key — photo check
+wrangler secret put MAPS_KEY     # paste your Google Places (New) AIza… key — restaurant list
 ```
+(`MAPS_KEY` is the billing-enabled Places API (New) key. Both are stored server-side only.)
+After adding/changing secrets, run `wrangler deploy` again.
 
 ## 3. Point the app at your Worker
 In `That-Place.html`, set the one constant near the top of the `<script>`:
