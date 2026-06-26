@@ -988,6 +988,7 @@
 
     <hr class="sep">
     <button class="unsolved-btn" id="unsolved-btn" onclick="saveUnsolved()">Save as unsolved — I'm still looking</button>
+    <button class="btn-secondary" style="margin-bottom:10px" onclick="redoSearch()">↻ Redo this search</button>
     <button class="btn-secondary" style="margin-bottom:10px" onclick="refineSearch()">+ Add more details to this search</button>
     <button class="restart" onclick="restart()">← Start over with a new description</button>
   </div>
@@ -1029,8 +1030,10 @@
 <!-- Profile tab -->
 <div class="container tab-panel" id="tab-profile">
   <div class="profile-top">
-    <div class="avatar-big" id="avatar-big" onclick="toggleAvatarPicker()" title="Change avatar">🍜</div>
+    <div class="avatar-big" id="avatar-big" onclick="toggleAvatarPicker()" title="Tap for emojis">🍜</div>
     <div class="avatar-picker" id="avatar-picker" style="display:none"></div>
+    <input type="file" id="profile-photo-file" accept="image/*" style="display:none" onchange="importProfilePhoto(event)" />
+    <button class="btn-secondary" style="margin:0 0 12px" onclick="document.getElementById('profile-photo-file').click()">📷 Import a photo</button>
     <input class="profile-input" id="profile-name" placeholder="Your name" maxlength="40" />
     <textarea class="profile-input" id="profile-bio" maxlength="150" placeholder="Food lover. Always chasing that one perfect bowl of ramen I had in 2019…"></textarea>
     <button class="btn-primary" id="save-profile-btn" onclick="saveProfile()" style="margin-top:0">Save profile</button>
@@ -2245,9 +2248,9 @@
         id: 'radius', type: 'choice', eyebrow: 'Search area',
         text: 'How wide an area should we search?',
         options: [
-          { label: 'Nearby — 1km', value: 1000 },
-          { label: 'Local area — 5km', value: 5000 },
-          { label: 'Wider search — 10km', value: 10000 },
+          { label: 'Nearby — 5 mi', value: 8000 },
+          { label: 'Local area — 20 mi', value: 32000 },
+          { label: 'Wider search — 50 mi', value: 80000 },
         ],
       });
     }
@@ -2633,6 +2636,14 @@
     runRankedSearch(r);
   }
 
+  // Re-run the same search with the current answers: fresh nearby pull + map reload,
+  // no retyping. (Refine = edit answers; Start over = wipe everything.)
+  function redoSearch() {
+    if (!st.result) { restart(); return; }
+    document.getElementById('thinking').classList.add('active');
+    showResultData(st.result);
+  }
+
   function restart() {
     stopListening(); stopSpeaking();
     voiceMode=false;
@@ -2752,6 +2763,20 @@
     renderTop10(); renderStats(); renderProfilePhotos();
   }
   function toggleAvatarPicker() { const pk = document.getElementById('avatar-picker'); pk.style.display = pk.style.display === 'none' ? 'flex' : 'none'; }
+  // Import a photo from the device as the profile picture. Sets the draft avatar
+  // and live preview; the existing "Save profile" button persists it.
+  function importProfilePhoto(e) {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => downscaleImage(rd.result, 400, 0.82, data => {
+      profileDraftAvatar = data;
+      applyAvatar(document.getElementById('avatar-big'), data);
+      const pk = document.getElementById('avatar-picker');
+      if (pk) pk.querySelectorAll('.avatar-opt').forEach(x => x.classList.remove('sel'));
+    });
+    rd.readAsDataURL(f);
+    e.target.value = '';
+  }
   function saveProfile() {
     const p = loadProfile();
     p.avatar = profileDraftAvatar || '🍜';
@@ -3452,7 +3477,7 @@
     const r = document.createElement('div'); r.className = 'top10-rank'; r.textContent = i + 1;
     const body = document.createElement('div'); body.className = 'fc-hist-body';
     const nm = document.createElement('div'); nm.className = 'fc-hist-name'; nm.textContent = it.name;
-    const sub = document.createElement('div'); sub.className = 'fc-hist-sub'; sub.textContent = `${(it.dist/1000).toFixed(1)} km` + (it.cuisine ? ' · ' + it.cuisine.replace(/[_;]/g,' ') : '') + (it.addr ? ' · ' + it.addr : '');
+    const sub = document.createElement('div'); sub.className = 'fc-hist-sub'; sub.textContent = `${(it.dist/1609.34).toFixed(1)} mi` + (it.cuisine ? ' · ' + it.cuisine.replace(/[_;]/g,' ') : '') + (it.addr ? ' · ' + it.addr : '');
     body.appendChild(nm); body.appendChild(sub);
     const menuUrl = it.menu || it.website || `https://www.google.com/search?q=${encodeURIComponent(it.name + ' ' + food.name + ' menu')}`;
     const menu = document.createElement('a'); menu.className = 'cand-photos'; menu.style.cssText = 'display:block;margin-top:4px'; menu.href = menuUrl; menu.target = '_blank'; menu.rel = 'noopener noreferrer';
@@ -3733,7 +3758,7 @@
     }
     const bits = [];
     if (p.category) bits.push(p.category);
-    if (typeof p.dist === 'number' && isFinite(p.dist)) bits.push((p.dist / 1000).toFixed(1) + ' km');
+    if (typeof p.dist === 'number' && isFinite(p.dist)) bits.push((p.dist / 1609.34).toFixed(1) + ' mi');
     if (p.address) bits.push(p.address);
     const meta = document.createElement('div'); meta.className = 'gm-meta'; meta.textContent = bits.join(' · '); body.appendChild(meta);
     if (p.openNow != null) { const o = document.createElement('div'); o.className = 'gm-open ' + (p.openNow ? 'yes' : 'no'); o.textContent = p.openNow ? 'Open now' : 'Closed'; body.appendChild(o); }
@@ -3776,16 +3801,16 @@
     if (FC_PROXY_URL) {
       try {
         const q = (r.query || '').replace(/\s*near me\s*/i, ' ').replace(/\s+/g, ' ').trim();
-        const radius = (a.radius && [1000, 5000, 10000].includes(a.radius)) ? a.radius : 8000;
+        const radius = (a.radius && [8000, 32000, 80000].includes(a.radius)) ? a.radius : 32000;
         const gp = await placesSearch(q, center, radius);
         if (gp && gp.length) { gmRenderPlaces(gp, center); return; }
       } catch (e) { console.warn('Places failed, falling back to OSM:', e); }
     }
 
     let raw = [];
-    // Use the radius the user picked in the questions (default 5km); widen once if too sparse.
-    const chosen = (a.radius && [1000, 5000, 10000].includes(a.radius)) ? a.radius : 5000;
-    const radii = chosen >= 10000 ? [10000] : [chosen, 10000];
+    // Use the radius the user picked in the questions (default 20 mi when no outline); widen once if too sparse.
+    const chosen = (a.radius && [8000, 32000, 80000].includes(a.radius)) ? a.radius : 32000;
+    const radii = chosen >= 32000 ? [chosen] : [chosen, 32000];
     for (const radius of radii) { raw = await rkOverpass(center, radius); if (raw.length >= 5) break; }
     if (!raw.length) {
       sec.innerHTML = "<div class=\"ranked-note\">Couldn't find nearby matches — use the search links below to cast a wider net.</div><div class=\"manual-divider\">Or search manually →</div>";
@@ -3860,7 +3885,7 @@
         `<div class="rk-scorebar-wrap"><div class="rk-scorebar"><i style="width:${pct}%;background:${color}"></i></div><span class="rk-score-num" style="color:${color}">${pct}%</span></div>` +
         `<div class="rk-name"></div><div class="rk-addr"></div></div>`;
     card.querySelector('.rk-name').textContent = c.name || 'Unnamed spot';
-    const distStr = (typeof c.dist === 'number') ? `${(c.dist / 1000).toFixed(1)} km · ` : '';
+    const distStr = (typeof c.dist === 'number') ? `${(c.dist / 1609.34).toFixed(1)} mi · ` : '';
     card.querySelector('.rk-addr').textContent = distStr + (c.address || 'Address not listed in OpenStreetMap');
     const body = card.querySelector('.rk-body');
     if (c.tags && c.tags.cuisine) { const ct = document.createElement('span'); ct.className = 'rk-cuisine'; ct.textContent = c.tags.cuisine.replace(/[_;]/g, ' '); body.appendChild(ct); }
