@@ -1257,7 +1257,7 @@
     { name: 'Bubble Tea',    re: /bubble tea|boba|milk tea|tapioca|taro.*tea/i },
     { name: 'Cafe',          re: /\bcafe\b|coffee shop|bakery|pastry/i },
     { name: 'Seafood',       re: /\bseafood\b|crab house|lobster|oyster bar/i },
-    { name: 'BBQ',           re: /\bbbq\b|barbecue|smokehouse/i },
+    { name: 'BBQ',           re: /\bb-?b-?q\b|barbe?cue|barbeque|barbacue|bar-?b-?q(?:ue)?\b|brisket|smokehouse|pulled pork|smoked (?:meat|brisket|ribs|sausage)/i },
     { name: 'Burger',        re: /\bburger\b|hamburger/i },
   ];
 
@@ -1584,6 +1584,10 @@
   function detect(text) {
     return { cuisines: CUISINES.filter(c=>c.re.test(text)).map(c=>c.name), hasLoc: LOC_RE.test(text) };
   }
+  // The matching regex for a detected cuisine NAME (e.g. 'BBQ' → /bbq|barbecue|brisket/).
+  // Lets us recognize a cuisine in a place's name/tags even when the words differ from
+  // our short label ("BBQ" vs a place tagged/named "barbecue", "smokehouse", "brisket").
+  function cuisineRe(name) { const c = CUISINES.find(x => x.name === name); return c ? c.re : null; }
 
   // Reduce free text to a few searchable keywords (drops filler, punctuation).
   const STOP_RE = /\b(the|a|an|that|this|some|with|and|or|but|very|really|kind|sort|of|i|we|remember|remembered|there|was|were|it|its|they|had|have|think|maybe|probably|place|places|spot|restaurant|restaurants|food|good|great|nice|like|looked|looks|looking|something|near|nearby|by|next|to|in|on|at|my|me|you|where|when|served|serve|serves)\b/gi;
@@ -3693,22 +3697,26 @@
     const matched = {};
     let score = 0;
 
-    // Cuisine (25)
-    const userCuisine = (((r && r.cuisine) || (detect((st.desc || '') + ' ' + (a.vivid || '')).cuisines[0]) || '')).toLowerCase();
+    // Cuisine (25) — match by the cuisine's whole vocabulary, checked against the
+    // OSM cuisine tag AND the name/tags, so "BBQ" recognizes a place named or
+    // tagged "barbecue", "smokehouse", "brisket" — not just the literal label.
+    const userCuisineName = (r && r.cuisine) || detect((st.desc || '') + ' ' + (a.vivid || '')).cuisines[0] || '';
+    const userCuisine = userCuisineName.toLowerCase();
     const osmCuisine = (tags.cuisine || '').toLowerCase();
-    if (userCuisine && osmCuisine) {
-      const parts = osmCuisine.split(/[;,]/).map(x => x.trim());
-      if (parts.some(x => x === userCuisine || x.includes(userCuisine) || userCuisine.includes(x))) { score += 25; matched.cuisine = true; }
-      else if (osmCuisine.includes(userCuisine.slice(0, 4))) { score += 12; matched.cuisine = true; }
+    const cre = (typeof cuisineRe === 'function') ? cuisineRe(userCuisineName) : null;
+    if (userCuisineName) {
+      const cHay = (osmCuisine + ' ' + name + ' ' + Object.values(tags).join(' ')).toLowerCase();
+      if (cre && cre.test(cHay)) { score += 25; matched.cuisine = true; }
+      else if (osmCuisine && osmCuisine.split(/[;,]/).some(x => { x = x.trim(); return x === userCuisine || x.includes(userCuisine) || userCuisine.includes(x); })) { score += 22; matched.cuisine = true; }
     }
 
-    // Name fragment (25)
+    // Name fragment (25) — real substring or sounds-alike only. (A shared first
+    // letter is NOT a match — that wrongly flagged every "T…" place for "Texas".)
     const nh = (typeof nameHint === 'function') ? nameHint(a.name || '') : { word: (a.name || ''), start: '' };
     const frag = (nh.word || '').toLowerCase().trim();
-    if (frag && frag.length > 1) {
+    if (frag && frag.length > 2) {
       if (name.includes(frag)) { score += 25; matched.name = true; }
       else if (rkSoundex(frag) === rkSoundex(name.split(/\s+/)[0] || '')) { score += 15; matched.name = true; }
-      else if (name[0] === frag[0]) { score += 10; matched.name = true; }
     }
     // Explicit "starts with" letter/prefix — literal match on the first word.
     // Skip if the word fragment already matched, so one name clue isn't counted twice.
@@ -3753,8 +3761,9 @@
     const nh = (typeof nameHint === 'function') ? nameHint((a && a.name) || '') : { word: '', start: '' };
     const word = (nh.word || '').toLowerCase();
     const start = nh.start;
-    const cuisine = (((r && r.cuisine) || (detect((st.desc || '') + ' ' + ((a && a.vivid) || '')).cuisines[0]) || '')).toLowerCase();
-    if ((!word || word.length < 2) && !start && !cuisine) return list;  // nothing to prioritize on
+    const cuisineName = (r && r.cuisine) || detect((st.desc || '') + ' ' + ((a && a.vivid) || '')).cuisines[0] || '';
+    const cre = (typeof cuisineRe === 'function') ? cuisineRe(cuisineName) : null;
+    if ((!word || word.length < 2) && !start && !cuisineName) return list;  // nothing to prioritize on
     const firstWord = nm => (nm || '').toLowerCase().replace(/^(the|el|la|le)\s+/, '').trim();
     const nameMatch = p => {
       const n = (p.name || '').toLowerCase();
@@ -3762,7 +3771,7 @@
       if (start && firstWord(p.name).startsWith(start)) return true;
       return false;
     };
-    const cuisineMatch = p => !!cuisine && (((p.category || '').toLowerCase().includes(cuisine)) || ((p.name || '').toLowerCase().includes(cuisine)));
+    const cuisineMatch = p => !!cre && cre.test(((p.category || '') + ' ' + (p.name || '')).toLowerCase());
     // Name is the strongest signal, cuisine secondary, distance breaks ties.
     // Stable sort: list is already closest-first, so preserving original index
     // keeps distance order within each priority group.
@@ -3869,13 +3878,14 @@
       return;
     }
 
-    // Only keep places that matched a real identity signal — the cuisine, the
-    // name fragment, or a word from the vivid memory. Generic attributes like
-    // "sit-down" or "outdoor" match half of all restaurants, so they don't
-    // qualify a result on their own (they still boost ranking). This stops the
-    // list from padding itself with random nearby spots that fit nothing.
+    // Only keep places that matched a real identity signal. When the user named a
+    // cuisine (e.g. Texas barbecue), REQUIRE a cuisine or name match — a stray
+    // vivid word alone shouldn't surface a Thai or taco place on a barbecue search.
+    // With no cuisine given, a vivid-word match still qualifies. Generic attributes
+    // ("sit-down", "outdoor") never qualify on their own (they only boost ranking).
+    const hasCuisine = !!((r && r.cuisine) || detect((st.desc || '') + ' ' + (a.vivid || '')).cuisines[0]);
     const scored = raw.map(c => Object.assign(c, rkScore(c, a, r), { dist: fcHaversine(center.lat, center.lon, c.lat, c.lon) }))
-      .filter(c => c.matched && (c.matched.cuisine || c.matched.name || c.matched.vivid))
+      .filter(c => c.matched && (hasCuisine ? (c.matched.cuisine || c.matched.name) : (c.matched.cuisine || c.matched.name || c.matched.vivid)))
       .sort((x, y) => x.dist - y.dist)   // ranked from closest
       .slice(0, 10);
     if (!scored.length) {
