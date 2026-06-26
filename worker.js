@@ -122,6 +122,12 @@ async function placePhoto(request, env, allow) {
 }
 
 function corsOrigin(origin, env) {
+  if (!origin) return '*';
+  // Always allow local dev and any Vercel deployment (production + previews) — the
+  // API key lives server-side, so this allowlist is just light anti-abuse, and an
+  // over-strict match was making the app silently fall back to the OSM list.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return origin;
+  if (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)) return origin;
   if (!env.ALLOWED_ORIGIN) return '*';
   const list = env.ALLOWED_ORIGIN.split(',').map(s => s.trim());
   return list.includes(origin) ? origin : 'null';

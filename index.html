@@ -1661,7 +1661,10 @@
   }
 
   function buildResult(desc, answers) {
-    const d = detect(desc);
+    // Detect cuisine from everything the user actually said — the description AND
+    // the name/memory answers — so "Texas barbacue" is recognized no matter which
+    // box it was typed into. (Was scanning only the description.)
+    const d = detect(desc + ' ' + (answers.vivid || '') + ' ' + (answers.name || ''));
     const allText = desc + ' ' + Object.values(answers).join(' ');
     const scope = detectScope(allText);
 
@@ -3700,7 +3703,7 @@
     // Cuisine (25) — match by the cuisine's whole vocabulary, checked against the
     // OSM cuisine tag AND the name/tags, so "BBQ" recognizes a place named or
     // tagged "barbecue", "smokehouse", "brisket" — not just the literal label.
-    const userCuisineName = (r && r.cuisine) || detect((st.desc || '') + ' ' + (a.vivid || '')).cuisines[0] || '';
+    const userCuisineName = (r && r.cuisine) || detect((st.desc || '') + ' ' + (a.vivid || '') + ' ' + (a.name || '')).cuisines[0] || '';
     const userCuisine = userCuisineName.toLowerCase();
     const osmCuisine = (tags.cuisine || '').toLowerCase();
     const cre = (typeof cuisineRe === 'function') ? cuisineRe(userCuisineName) : null;
@@ -3761,7 +3764,7 @@
     const nh = (typeof nameHint === 'function') ? nameHint((a && a.name) || '') : { word: '', start: '' };
     const word = (nh.word || '').toLowerCase();
     const start = nh.start;
-    const cuisineName = (r && r.cuisine) || detect((st.desc || '') + ' ' + ((a && a.vivid) || '')).cuisines[0] || '';
+    const cuisineName = (r && r.cuisine) || detect((st.desc || '') + ' ' + ((a && a.vivid) || '') + ' ' + ((a && a.name) || '')).cuisines[0] || '';
     const cre = (typeof cuisineRe === 'function') ? cuisineRe(cuisineName) : null;
     if ((!word || word.length < 2) && !start && !cuisineName) return list;  // nothing to prioritize on
     const firstWord = nm => (nm || '').toLowerCase().replace(/^(the|el|la|le)\s+/, '').trim();
@@ -3883,7 +3886,7 @@
     // vivid word alone shouldn't surface a Thai or taco place on a barbecue search.
     // With no cuisine given, a vivid-word match still qualifies. Generic attributes
     // ("sit-down", "outdoor") never qualify on their own (they only boost ranking).
-    const hasCuisine = !!((r && r.cuisine) || detect((st.desc || '') + ' ' + (a.vivid || '')).cuisines[0]);
+    const hasCuisine = !!((r && r.cuisine) || detect((st.desc || '') + ' ' + (a.vivid || '') + ' ' + (a.name || '')).cuisines[0]);
     const scored = raw.map(c => Object.assign(c, rkScore(c, a, r), { dist: fcHaversine(center.lat, center.lon, c.lat, c.lon) }))
       .filter(c => c.matched && (hasCuisine ? (c.matched.cuisine || c.matched.name) : (c.matched.cuisine || c.matched.name || c.matched.vivid)))
       .sort((x, y) => x.dist - y.dist)   // ranked from closest
@@ -3907,7 +3910,7 @@
 
     const chips = document.createElement('div'); chips.className = 'ranked-chips';
     const sig = [];
-    const uc = (r && r.cuisine) || (detect((st.desc || '') + ' ' + (a.vivid || '')).cuisines[0]) || '';
+    const uc = (r && r.cuisine) || (detect((st.desc || '') + ' ' + (a.vivid || '') + ' ' + (a.name || '')).cuisines[0]) || '';
     if (uc) sig.push(['cuisine', uc]);
     if (a.loc && a.loc.toLowerCase() !== 'near me') sig.push(['location', a.loc]);
     else if (a.boundary) sig.push(['location', 'your map area']);

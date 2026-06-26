@@ -1,6 +1,6 @@
 // That Place — service worker. Network-first for same-origin GETs (so deploys
 // show up immediately), with a cache fallback so the app opens offline.
-const CACHE = 'thatplace-v1';
+const CACHE = 'thatplace-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (e) => {
