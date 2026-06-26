@@ -1594,9 +1594,21 @@
   // Pull a usable name word out of a fuzzy answer ("had Garden in it" → "Garden").
   function nameToken(text) {
     const toks = (text || '').match(/[A-Za-z]{3,}/g) || [];
-    const skip = new Set(['started','start','starts','starting','with','letter','letters','first','word','words','had','the','name','named','calling','called','something','sounds','sound','sounded','like','think','maybe','remember','was','were','and','for','about','some','kind']);
+    const skip = new Set(['started','start','starts','starting','begin','begins','beginning','began','with','letter','letters','first','word','words','had','the','name','named','calling','called','something','sounds','sound','sounded','like','think','maybe','remember','was','were','and','for','about','some','kind']);
     const hit = toks.find(w => !skip.has(w.toLowerCase()));
     return hit || '';
+  }
+  // What the user remembers about the NAME: a full word (nameToken) and/or an
+  // explicit "starts with" letter/prefix. Kept deliberately literal — we only
+  // read what they actually said ("starts with B", "first letter T"), no guessing.
+  function nameHint(text) {
+    const t = (text || '').trim();
+    if (!t || /^(no|nope|not sure|no idea|nothing|none|don'?t|can'?t|cannot|dunno|unsure)\b/i.test(t)) return { word: '', start: '' };
+    let start = '';
+    const m = t.match(/(?:start(?:s|ed|ing)?|begin(?:s|ning)?|began)\s+with\s+(?:(?:the\s+)?(?:letter|word)\s+)?(?:an?\s+)?["“']?([A-Za-z][A-Za-z]{0,11})/i)
+          || t.match(/(?:first\s+letter|the\s+letter|letter)\s+(?:is\s+|was\s+)?["“']?([A-Za-z])\b/i);
+    if (m) start = m[1].toLowerCase();
+    return { word: nameToken(t), start };
   }
 
   // ── Optimized Maps-specific query builder ─────────────────────
@@ -3686,11 +3698,17 @@
     }
 
     // Name fragment (25)
-    const frag = (typeof nameToken === 'function' ? nameToken(a.name || '') : (a.name || '')).toLowerCase().trim();
+    const nh = (typeof nameHint === 'function') ? nameHint(a.name || '') : { word: (a.name || ''), start: '' };
+    const frag = (nh.word || '').toLowerCase().trim();
     if (frag && frag.length > 1) {
       if (name.includes(frag)) { score += 25; matched.name = true; }
       else if (rkSoundex(frag) === rkSoundex(name.split(/\s+/)[0] || '')) { score += 15; matched.name = true; }
       else if (name[0] === frag[0]) { score += 10; matched.name = true; }
+    }
+    // Explicit "starts with" letter/prefix — literal match on the first word.
+    if (nh.start) {
+      const firstWord = name.replace(/^(the|el|la|le)\s+/, '').trim();
+      if (firstWord.startsWith(nh.start)) { score += nh.start.length > 1 ? 22 : 14; matched.name = true; }
     }
 
     // Vivid memory words (20)
@@ -3718,6 +3736,30 @@
     score += (old && /\bnew\b|nuevo/i.test(name)) ? 0 : 5;
 
     return { score: Math.min(100, Math.round(score)), matched };
+  }
+
+  // If the user remembered part of the name (a word, or what it "starts with"),
+  // float matching restaurants to the top of the Google list — closest-first
+  // within each group. Literal substring/prefix only; if they gave no name
+  // signal, the list stays exactly as-is (closest-first). No overthinking.
+  function rkPrioritizeByName(list, a) {
+    if (!list || !list.length) return list;
+    const nh = (typeof nameHint === 'function') ? nameHint((a && a.name) || '') : { word: '', start: '' };
+    const word = (nh.word || '').toLowerCase();
+    const start = nh.start;
+    if ((!word || word.length < 2) && !start) return list;  // nothing to prioritize on
+    const firstWord = nm => (nm || '').toLowerCase().replace(/^(the|el|la|le)\s+/, '').trim();
+    const isMatch = p => {
+      const n = (p.name || '').toLowerCase();
+      if (word && word.length > 1 && n.includes(word)) return true;
+      if (start && firstWord(p.name).startsWith(start)) return true;
+      return false;
+    };
+    // Stable sort: list is already closest-first, so preserving original index
+    // keeps distance order within the "matches" and "non-matches" groups.
+    return list.map((p, i) => ({ p, i, m: isMatch(p) ? 1 : 0 }))
+               .sort((x, y) => (y.m - x.m) || (x.i - y.i))
+               .map(o => o.p);
   }
 
   // ── Google Places (rich cards via the cloud proxy) ──
@@ -3803,7 +3845,8 @@
         const q = (r.query || '').replace(/\s*near me\s*/i, ' ').replace(/\s+/g, ' ').trim();
         const radius = (a.radius && [8000, 32000, 80000].includes(a.radius)) ? a.radius : 32000;
         const gp = await placesSearch(q, center, radius);
-        if (gp && gp.length) { gmRenderPlaces(gp, center); return; }
+        const ranked = rkPrioritizeByName(gp, a);
+        if (ranked && ranked.length) { gmRenderPlaces(ranked, center); return; }
       } catch (e) { console.warn('Places failed, falling back to OSM:', e); }
     }
 
